@@ -51,7 +51,7 @@ def money(v) -> str:
 # ---------- Persistent Reply Keyboard (main menu) ----------
 
 BTN_SELL = "📧 Gmail Sell"
-BTN_BUY = "🛒  Gmail Buy"
+BTN_BUY = "🛒 Gmail Buy"
 BTN_DEPOSIT = "💰 Deposit"
 BTN_WITHDRAW = "💸 Withdraw"
 BTN_BALANCE = "💳 Balance"
@@ -184,7 +184,7 @@ async def sell_task_selected(update: Update, context: ContextTypes.DEFAULT_TYPE)
         f"💵 Reward: ৳{money(task['price'])}\n"
         f"📝 {task['description'] or 'কোনো অতিরিক্ত নির্দেশনা নেই।'}\n\n"
         "শুধু আপনার Gmail address পাঠান।\n"
-        "⚠️ Password, OTP, recovery code বা অন্য কোনো গোপন তথ্য পাঠাবেন না।\n\n"
+        "⚠️ Password, যেটা দিয়েছি সেটা সেট করুন, recovery নাম্বার বা gmail এড থাকলে জিমিল বাতিল করা দেওয়া  হবে।\n\n"
         "উদাহরণ: example@gmail.com"
     )
     return SELL_EMAIL
@@ -893,6 +893,22 @@ def build_application():
 
     home_guard = MessageHandler(btn(BTN_HOME), go_home)
 
+    # Pressing ANY persistent main-menu button while the bot is waiting for
+    # free-text input (an amount, an email, etc.) should jump straight to
+    # that section instead of being misread as the expected input.
+    menu_guards = [
+        home_guard,
+        MessageHandler(btn(BTN_SELL), sell_menu),
+        MessageHandler(btn(BTN_BUY), buy_menu),
+        MessageHandler(btn(BTN_DEPOSIT), deposit_start),
+        MessageHandler(btn(BTN_WITHDRAW), withdraw_start),
+        MessageHandler(btn(BTN_BALANCE), balance),
+        MessageHandler(btn(BTN_ORDERS), my_orders),
+        MessageHandler(btn(BTN_HELP), help_cmd),
+        MessageHandler(btn(BTN_SUPPORT), support),
+        MessageHandler(btn(BTN_ADMIN), admin_panel),
+    ]
+
     conv = ConversationHandler(
         entry_points=[
             CallbackQueryHandler(sell_menu, "^sell_menu$"),
@@ -911,30 +927,30 @@ def build_application():
         ],
         states={
             SELL_TASK: [CallbackQueryHandler(sell_task_selected, r"^sell_task:\d+$")],
-            SELL_EMAIL: [home_guard, MessageHandler(filters.TEXT & ~filters.COMMAND, sell_email_received)],
+            SELL_EMAIL: [*menu_guards, MessageHandler(filters.TEXT & ~filters.COMMAND, sell_email_received)],
             BUY_SERVICE: [CallbackQueryHandler(buy_service_selected, r"^buy_service:\d+$")],
             BUY_CONFIRM: [
                 CallbackQueryHandler(buy_confirm, "^buy_confirm$"),
                 CallbackQueryHandler(buy_cancel, "^buy_cancel$"),
             ],
-            DEPOSIT_AMOUNT: [home_guard, MessageHandler(filters.TEXT & ~filters.COMMAND, deposit_amount)],
-            DEPOSIT_DETAILS: [home_guard, MessageHandler(filters.TEXT & ~filters.COMMAND, deposit_details)],
-            WITHDRAW_AMOUNT: [home_guard, MessageHandler(filters.TEXT & ~filters.COMMAND, withdraw_amount)],
-            WITHDRAW_DETAILS: [home_guard, MessageHandler(filters.TEXT & ~filters.COMMAND, withdraw_details)],
-            ADMIN_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_price_value)],
-            ADMIN_BKASH: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_bkash_value)],
-            ADMIN_ADD_SELL_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_sell_title)],
-            ADMIN_ADD_SELL_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_sell_price)],
-            ADMIN_ADD_SELL_DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_sell_desc)],
-            ADMIN_ADD_BUY_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_buy_title)],
-            ADMIN_ADD_BUY_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_buy_price)],
-            ADMIN_ADD_BUY_DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_buy_desc)],
-            ADMIN_BROADCAST: [MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_send)],
+            DEPOSIT_AMOUNT: [*menu_guards, MessageHandler(filters.TEXT & ~filters.COMMAND, deposit_amount)],
+            DEPOSIT_DETAILS: [*menu_guards, MessageHandler(filters.TEXT & ~filters.COMMAND, deposit_details)],
+            WITHDRAW_AMOUNT: [*menu_guards, MessageHandler(filters.TEXT & ~filters.COMMAND, withdraw_amount)],
+            WITHDRAW_DETAILS: [*menu_guards, MessageHandler(filters.TEXT & ~filters.COMMAND, withdraw_details)],
+            ADMIN_PRICE: [home_guard, MessageHandler(filters.TEXT & ~filters.COMMAND, set_price_value)],
+            ADMIN_BKASH: [home_guard, MessageHandler(filters.TEXT & ~filters.COMMAND, set_bkash_value)],
+            ADMIN_ADD_SELL_TITLE: [home_guard, MessageHandler(filters.TEXT & ~filters.COMMAND, add_sell_title)],
+            ADMIN_ADD_SELL_PRICE: [home_guard, MessageHandler(filters.TEXT & ~filters.COMMAND, add_sell_price)],
+            ADMIN_ADD_SELL_DESC: [home_guard, MessageHandler(filters.TEXT & ~filters.COMMAND, add_sell_desc)],
+            ADMIN_ADD_BUY_TITLE: [home_guard, MessageHandler(filters.TEXT & ~filters.COMMAND, add_buy_title)],
+            ADMIN_ADD_BUY_PRICE: [home_guard, MessageHandler(filters.TEXT & ~filters.COMMAND, add_buy_price)],
+            ADMIN_ADD_BUY_DESC: [home_guard, MessageHandler(filters.TEXT & ~filters.COMMAND, add_buy_desc)],
+            ADMIN_BROADCAST: [home_guard, MessageHandler(filters.TEXT & ~filters.COMMAND, broadcast_send)],
         },
         fallbacks=[
             CommandHandler("cancel", cancel),
             CallbackQueryHandler(back, "^back$"),
-            home_guard,
+            *menu_guards,
         ],
         allow_reentry=True,
     )
