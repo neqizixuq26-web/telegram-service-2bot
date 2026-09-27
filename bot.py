@@ -49,8 +49,8 @@ def money(v) -> str:
 
 # ---------- Persistent Reply Keyboard (main menu) ----------
 
-BTN_SELL = "📧 Gmail Task"
-BTN_BUY = "🛒 Buy Services"
+BTN_SELL = "📧 Gmail Sell"
+BTN_BUY = "🛒 Buy Gmail"
 BTN_DEPOSIT = "💰 Deposit"
 BTN_WITHDRAW = "💸 Withdraw"
 BTN_BALANCE = "💳 Balance"
