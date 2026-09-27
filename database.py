@@ -1,76 +1,97 @@
-import os
+
 import sqlite3
-from decimal import Decimal
+from contextlib import closing
+from pathlib import Path
 
-DB = os.getenv("DATABASE_PATH", "bot.db")
+DB_PATH = Path(__file__).with_name("bot.db")
 
 
-def conn():
-    c = sqlite3.connect(DB)
-    c.row_factory = sqlite3.Row
-    return c
+def connect():
+    con = sqlite3.connect(DB_PATH)
+    con.row_factory = sqlite3.Row
+    con.execute("PRAGMA foreign_keys=ON")
+    return con
 
 
 def init_db():
-    with conn() as c:
-        c.executescript("""
-        CREATE TABLE IF NOT EXISTS users(
+    with closing(connect()) as con:
+        con.executescript("""
+        CREATE TABLE IF NOT EXISTS users (
             user_id INTEGER PRIMARY KEY,
-            username TEXT,
-            name TEXT,
+            username TEXT DEFAULT '',
+            first_name TEXT DEFAULT '',
             balance REAL NOT NULL DEFAULT 0,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS settings (
+            key TEXT PRIMARY KEY,
+            value TEXT NOT NULL DEFAULT ''
+        );
+
+        CREATE TABLE IF NOT EXISTS sell_tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            price REAL NOT NULL,
+            description TEXT DEFAULT '',
+            active INTEGER NOT NULL DEFAULT 1,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
-        CREATE TABLE IF NOT EXISTS settings(
-            key TEXT PRIMARY KEY,
-            value TEXT NOT NULL
-        );
-        CREATE TABLE IF NOT EXISTS sell_requests(
+
+        CREATE TABLE IF NOT EXISTS sell_submissions (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id INTEGER NOT NULL,
-            test_email TEXT NOT NULL,
-            test_label TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'Pending',
-            amount REAL NOT NULL DEFAULT 0,
+            task_id INTEGER NOT NULL,
+            email TEXT NOT NULL,
+            price REAL NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            reviewed_at TEXT,
+            FOREIGN KEY(user_id) REFERENCES users(user_id),
+            FOREIGN KEY(task_id) REFERENCES sell_tasks(id)
+        );
+
+        CREATE TABLE IF NOT EXISTS buy_services (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            title TEXT NOT NULL,
+            price REAL NOT NULL,
+            description TEXT DEFAULT '',
+            active INTEGER NOT NULL DEFAULT 1,
             created_at TEXT DEFAULT CURRENT_TIMESTAMP
         );
-        CREATE TABLE IF NOT EXISTS stock(
+
+        CREATE TABLE IF NOT EXISTS orders (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            item TEXT NOT NULL,
-            status TEXT NOT NULL DEFAULT 'available'
+            user_id INTEGER NOT NULL,
+            service_id INTEGER NOT NULL,
+            title TEXT NOT NULL,
+            price REAL NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            reviewed_at TEXT,
+            FOREIGN KEY(user_id) REFERENCES users(user_id),
+            FOREIGN KEY(service_id) REFERENCES buy_services(id)
         );
-        CREATE TABLE IF NOT EXISTS deposits(
+
+        CREATE TABLE IF NOT EXISTS deposits (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            amount REAL,
-            details TEXT,
-            status TEXT DEFAULT 'Pending',
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            user_id INTEGER NOT NULL,
+            amount REAL NOT NULL,
+            details TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            reviewed_at TEXT
         );
-        CREATE TABLE IF NOT EXISTS withdrawals(
+
+        CREATE TABLE IF NOT EXISTS withdrawals (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            amount REAL,
-            details TEXT,
-            status TEXT DEFAULT 'Pending',
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
-        );
-        CREATE TABLE IF NOT EXISTS orders(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            qty INTEGER,
-            total REAL,
-            status TEXT,
-            items TEXT,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
-        );
-        CREATE TABLE IF NOT EXISTS transactions(
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            type TEXT,
-            amount REAL,
-            note TEXT,
-            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            user_id INTEGER NOT NULL,
+            amount REAL NOT NULL,
+            details TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            reviewed_at TEXT
         );
         """)
         defaults = {
@@ -78,202 +99,306 @@ def init_db():
             "bkash_number": "",
             "nagad_number": "",
         }
-        for key, value in defaults.items():
-            c.execute("INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", (key, value))
-        c.commit()
+        for k, v in defaults.items():
+            con.execute("INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", (k, v))
+        con.commit()
 
 
-def ensure_user(uid, username, name):
-    with conn() as c:
-        c.execute("INSERT OR IGNORE INTO users(user_id,username,name) VALUES(?,?,?)", (uid, username, name))
-        c.execute("UPDATE users SET username=?, name=? WHERE user_id=?", (username, name, uid))
-        c.commit()
+def upsert_user(user_id, username="", first_name=""):
+    with closing(connect()) as con:
+        con.execute("""
+            INSERT INTO users(user_id, username, first_name)
+            VALUES(?,?,?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                username=excluded.username,
+                first_name=excluded.first_name,
+                updated_at=CURRENT_TIMESTAMP
+        """, (user_id, username, first_name))
+        con.commit()
 
 
-def get_balance(uid):
-    with conn() as c:
-        r = c.execute("SELECT balance FROM users WHERE user_id=?", (uid,)).fetchone()
-        return Decimal(str(r["balance"] if r else 0))
+def all_user_ids():
+    with closing(connect()) as con:
+        return [r["user_id"] for r in con.execute("SELECT user_id FROM users").fetchall()]
 
 
-def add_balance(uid, amount, note):
-    with conn() as c:
-        c.execute("UPDATE users SET balance=balance+? WHERE user_id=?", (float(amount), uid))
-        c.execute("INSERT INTO transactions(user_id,type,amount,note) VALUES(?,?,?,?)", (uid, "credit", float(amount), note))
-        c.commit()
+def list_users(limit=30):
+    with closing(connect()) as con:
+        return con.execute(
+            "SELECT * FROM users ORDER BY created_at DESC LIMIT ?", (limit,)
+        ).fetchall()
 
 
-def get_price():
-    with conn() as c:
-        r = c.execute("SELECT value FROM settings WHERE key='gmail_price'").fetchone()
-        return Decimal(str(r["value"] if r else "20"))
+def get_balance(user_id):
+    with closing(connect()) as con:
+        row = con.execute("SELECT balance FROM users WHERE user_id=?", (user_id,)).fetchone()
+        return float(row["balance"]) if row else 0.0
 
 
-def set_price(p):
-    with conn() as c:
-        c.execute("INSERT OR REPLACE INTO settings(key,value) VALUES('gmail_price',?)", (str(p),))
-        c.commit()
+def adjust_balance(user_id, amount):
+    with closing(connect()) as con:
+        con.execute("UPDATE users SET balance=balance+?, updated_at=CURRENT_TIMESTAMP WHERE user_id=?", (amount, user_id))
+        con.commit()
 
 
 def get_setting(key, default=""):
-    with conn() as c:
-        r = c.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
-        return r["value"] if r else default
+    with closing(connect()) as con:
+        row = con.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
+        return row["value"] if row else default
 
 
 def set_setting(key, value):
-    with conn() as c:
-        c.execute("INSERT OR REPLACE INTO settings(key,value) VALUES(?,?)", (key, value.strip()))
-        c.commit()
+    with closing(connect()) as con:
+        con.execute("""
+            INSERT INTO settings(key,value) VALUES(?,?)
+            ON CONFLICT(key) DO UPDATE SET value=excluded.value
+        """, (key, str(value)))
+        con.commit()
 
 
 def get_payment_info():
     return {
         "bkash": get_setting("bkash_number"),
         "nagad": get_setting("nagad_number"),
+        "gmail_price": float(get_setting("gmail_price", "20") or 20),
     }
 
 
-def create_sell(uid, email, label):
-    price = get_price()
-    with conn() as c:
-        r = c.execute("INSERT INTO sell_requests(user_id,test_email,test_label,amount) VALUES(?,?,?,?)", (uid, email, label, float(price)))
-        c.commit()
-        return r.lastrowid
+def add_sell_task(title, price, description=""):
+    with closing(connect()) as con:
+        cur = con.execute(
+            "INSERT INTO sell_tasks(title,price,description) VALUES(?,?,?)",
+            (title, price, description)
+        )
+        con.commit()
+        return cur.lastrowid
 
 
-def approve_sell(sid, approved):
-    with conn() as c:
-        r = c.execute("SELECT * FROM sell_requests WHERE id=?", (sid,)).fetchone()
-        if not r or r["status"] != "Pending":
-            return False, 0, Decimal("0")
-        status = "Approved" if approved else "Rejected"
-        c.execute("UPDATE sell_requests SET status=? WHERE id=?", (status, sid))
-        if approved:
-            c.execute("UPDATE users SET balance=balance+? WHERE user_id=?", (r["amount"], r["user_id"]))
-            c.execute("INSERT INTO transactions(user_id,type,amount,note) VALUES(?,?,?,?)", (r["user_id"], "credit", r["amount"], f"Test sell #{sid}"))
-            c.execute("INSERT INTO stock(item) VALUES(?)", (r["test_email"],))
-        c.commit()
-        return True, r["user_id"], Decimal(str(r["amount"]))
+def list_sell_tasks(active_only=True):
+    with closing(connect()) as con:
+        sql = "SELECT * FROM sell_tasks"
+        if active_only:
+            sql += " WHERE active=1"
+        sql += " ORDER BY id DESC"
+        return con.execute(sql).fetchall()
 
 
-def stock_count():
-    with conn() as c:
-        return c.execute("SELECT COUNT(*) n FROM stock WHERE status='available'").fetchone()["n"]
+def get_sell_task(task_id):
+    with closing(connect()) as con:
+        return con.execute("SELECT * FROM sell_tasks WHERE id=?", (task_id,)).fetchone()
 
 
-def add_test_stock(n):
-    import uuid
-    with conn() as c:
-        for _ in range(n):
-            c.execute("INSERT INTO stock(item) VALUES(?)", (f"TEST-GMAIL-{uuid.uuid4().hex[:10].upper()}",))
-        c.commit()
+def toggle_sell_task(task_id):
+    with closing(connect()) as con:
+        con.execute("UPDATE sell_tasks SET active=CASE active WHEN 1 THEN 0 ELSE 1 END WHERE id=?", (task_id,))
+        con.commit()
 
 
-def purchase(uid, qty, total):
-    with conn() as c:
-        c.execute("BEGIN IMMEDIATE")
-        r = c.execute("SELECT balance FROM users WHERE user_id=?", (uid,)).fetchone()
-        if not r or Decimal(str(r["balance"])) < total:
-            c.rollback(); return False, []
-        rows = c.execute("SELECT id,item FROM stock WHERE status='available' LIMIT ?", (qty,)).fetchall()
-        if len(rows) != qty:
-            c.rollback(); return False, []
-        c.execute("UPDATE users SET balance=balance-? WHERE user_id=?", (float(total), uid))
-        ids = [r["id"] for r in rows]
-        c.executemany("UPDATE stock SET status='sold' WHERE id=?", [(x,) for x in ids])
-        items = [r["item"] for r in rows]
-        c.execute("INSERT INTO orders(user_id,qty,total,status,items) VALUES(?,?,?,?,?)", (uid, qty, float(total), "Completed", ",".join(items)))
-        c.execute("INSERT INTO transactions(user_id,type,amount,note) VALUES(?,?,?,?)", (uid, "debit", float(total), f"Buy {qty} test items"))
-        c.commit()
-        return True, items
+def create_sell_submission(user_id, task_id, email):
+    task = get_sell_task(task_id)
+    price = float(task["price"])
+    with closing(connect()) as con:
+        cur = con.execute(
+            "INSERT INTO sell_submissions(user_id,task_id,email,price) VALUES(?,?,?,?)",
+            (user_id, task_id, email, price)
+        )
+        con.commit()
+        return cur.lastrowid
 
 
-def create_deposit(uid, amount, details):
-    with conn() as c:
-        r = c.execute("INSERT INTO deposits(user_id,amount,details) VALUES(?,?,?)", (uid, float(amount), details))
-        c.commit(); return r.lastrowid
+def pending_sell_submissions():
+    with closing(connect()) as con:
+        return con.execute("""
+            SELECT ss.*, st.title
+            FROM sell_submissions ss
+            JOIN sell_tasks st ON st.id=ss.task_id
+            WHERE ss.status='pending'
+            ORDER BY ss.id DESC
+        """).fetchall()
 
 
-def approve_deposit(did, approved):
-    with conn() as c:
-        r = c.execute("SELECT * FROM deposits WHERE id=?", (did,)).fetchone()
-        if not r or r["status"] != "Pending": return False, 0, Decimal("0")
-        status = "Approved" if approved else "Rejected"
-        c.execute("UPDATE deposits SET status=? WHERE id=?", (status, did))
-        if approved:
-            c.execute("UPDATE users SET balance=balance+? WHERE user_id=?", (r["amount"], r["user_id"]))
-            c.execute("INSERT INTO transactions(user_id,type,amount,note) VALUES(?,?,?,?)", (r["user_id"], "credit", r["amount"], f"Deposit #{did}"))
-        c.commit()
-        return True, r["user_id"], Decimal(str(r["amount"]))
+def review_sell(submission_id, approve):
+    with closing(connect()) as con:
+        row = con.execute("SELECT * FROM sell_submissions WHERE id=?", (submission_id,)).fetchone()
+        if not row or row["status"] != "pending":
+            return False
+        new_status = "approved" if approve else "rejected"
+        con.execute(
+            "UPDATE sell_submissions SET status=?, reviewed_at=CURRENT_TIMESTAMP WHERE id=?",
+            (new_status, submission_id)
+        )
+        if approve:
+            con.execute(
+                "UPDATE users SET balance=balance+?, updated_at=CURRENT_TIMESTAMP WHERE user_id=?",
+                (row["price"], row["user_id"])
+            )
+        con.commit()
+        return True
 
 
-def create_withdrawal(uid, amount, details):
-    with conn() as c:
-        c.execute("BEGIN IMMEDIATE")
-        r = c.execute("SELECT balance FROM users WHERE user_id=?", (uid,)).fetchone()
-        if not r or Decimal(str(r["balance"])) < amount:
-            c.rollback(); raise ValueError("Insufficient balance")
-        c.execute("UPDATE users SET balance=balance-? WHERE user_id=?", (float(amount), uid))
-        c.execute("INSERT INTO withdrawals(user_id,amount,details) VALUES(?,?,?)", (uid, float(amount), details))
-        c.execute("INSERT INTO transactions(user_id,type,amount,note) VALUES(?,?,?,?)", (uid, "debit", float(amount), "Withdrawal locked"))
-        wid = c.execute("SELECT last_insert_rowid()").fetchone()[0]
-        c.commit(); return wid
+def add_buy_service(title, price, description=""):
+    with closing(connect()) as con:
+        cur = con.execute(
+            "INSERT INTO buy_services(title,price,description) VALUES(?,?,?)",
+            (title, price, description)
+        )
+        con.commit()
+        return cur.lastrowid
 
 
-def approve_withdrawal(wid, approved):
-    with conn() as c:
-        r = c.execute("SELECT * FROM withdrawals WHERE id=?", (wid,)).fetchone()
-        if not r or r["status"] != "Pending": return False, 0, Decimal("0")
-        status = "Approved" if approved else "Rejected"
-        c.execute("UPDATE withdrawals SET status=? WHERE id=?", (status, wid))
-        if not approved:
-            c.execute("UPDATE users SET balance=balance+? WHERE user_id=?", (r["amount"], r["user_id"]))
-            c.execute("INSERT INTO transactions(user_id,type,amount,note) VALUES(?,?,?,?)", (r["user_id"], "credit", r["amount"], f"Withdrawal refund #{wid}"))
-        c.commit()
-        return True, r["user_id"], Decimal(str(r["amount"]))
+def list_buy_services(active_only=True):
+    with closing(connect()) as con:
+        sql = "SELECT * FROM buy_services"
+        if active_only:
+            sql += " WHERE active=1"
+        sql += " ORDER BY id DESC"
+        return con.execute(sql).fetchall()
 
 
-def all_users():
-    with conn() as c:
-        return [r["user_id"] for r in c.execute("SELECT user_id FROM users").fetchall()]
+def get_buy_service(service_id):
+    with closing(connect()) as con:
+        return con.execute("SELECT * FROM buy_services WHERE id=?", (service_id,)).fetchone()
 
 
-def user_orders(uid):
-    with conn() as c:
-        rows = c.execute("SELECT id,qty,total,status,created_at FROM orders WHERE user_id=? ORDER BY id DESC LIMIT 20", (uid,)).fetchall()
-    return "\n".join(f"🛒 #{r['id']} | Qty {r['qty']} | ৳{r['total']:.2f} | {r['status']}" for r in rows)
+def toggle_buy_service(service_id):
+    with closing(connect()) as con:
+        con.execute("UPDATE buy_services SET active=CASE active WHEN 1 THEN 0 ELSE 1 END WHERE id=?", (service_id,))
+        con.commit()
 
 
-def transactions(uid):
-    with conn() as c:
-        rows = c.execute("SELECT type,amount,note,created_at FROM transactions WHERE user_id=? ORDER BY id DESC LIMIT 20", (uid,)).fetchall()
-    return "\n".join(f"📜 {r['type']} | ৳{r['amount']:.2f} | {r['note']}" for r in rows)
+def create_buy_order(user_id, service_id):
+    with closing(connect()) as con:
+        user = con.execute("SELECT balance FROM users WHERE user_id=?", (user_id,)).fetchone()
+        service = con.execute("SELECT * FROM buy_services WHERE id=?", (service_id,)).fetchone()
+        if not service or not service["active"]:
+            return False, "Service available নেই।"
+        if not user or float(user["balance"]) < float(service["price"]):
+            return False, "আপনার balance পর্যাপ্ত নয়।"
+        con.execute(
+            "UPDATE users SET balance=balance-?, updated_at=CURRENT_TIMESTAMP WHERE user_id=?",
+            (service["price"], user_id)
+        )
+        cur = con.execute(
+            "INSERT INTO orders(user_id,service_id,title,price) VALUES(?,?,?,?)",
+            (user_id, service_id, service["title"], service["price"])
+        )
+        con.commit()
+        return True, cur.lastrowid
+
+
+def pending_orders():
+    with closing(connect()) as con:
+        return con.execute("SELECT * FROM orders WHERE status='pending' ORDER BY id DESC").fetchall()
+
+
+def user_orders(user_id):
+    with closing(connect()) as con:
+        return con.execute("SELECT * FROM orders WHERE user_id=? ORDER BY id DESC", (user_id,)).fetchall()
+
+
+def review_order(order_id, complete):
+    with closing(connect()) as con:
+        row = con.execute("SELECT * FROM orders WHERE id=?", (order_id,)).fetchone()
+        if not row or row["status"] != "pending":
+            return False
+        if complete:
+            status = "completed"
+        else:
+            status = "rejected"
+            con.execute(
+                "UPDATE users SET balance=balance+?, updated_at=CURRENT_TIMESTAMP WHERE user_id=?",
+                (row["price"], row["user_id"])
+            )
+        con.execute(
+            "UPDATE orders SET status=?, reviewed_at=CURRENT_TIMESTAMP WHERE id=?",
+            (status, order_id)
+        )
+        con.commit()
+        return True
+
+
+def create_deposit(user_id, amount, details):
+    with closing(connect()) as con:
+        cur = con.execute(
+            "INSERT INTO deposits(user_id,amount,details) VALUES(?,?,?)",
+            (user_id, amount, details)
+        )
+        con.commit()
+        return cur.lastrowid
+
+
+def pending_deposits():
+    with closing(connect()) as con:
+        return con.execute("SELECT * FROM deposits WHERE status='pending' ORDER BY id DESC").fetchall()
+
+
+def review_deposit(dep_id, approve):
+    with closing(connect()) as con:
+        row = con.execute("SELECT * FROM deposits WHERE id=?", (dep_id,)).fetchone()
+        if not row or row["status"] != "pending":
+            return False
+        status = "approved" if approve else "rejected"
+        con.execute("UPDATE deposits SET status=?, reviewed_at=CURRENT_TIMESTAMP WHERE id=?", (status, dep_id))
+        if approve:
+            con.execute(
+                "UPDATE users SET balance=balance+?, updated_at=CURRENT_TIMESTAMP WHERE user_id=?",
+                (row["amount"], row["user_id"])
+            )
+        con.commit()
+        return True
+
+
+def create_withdrawal(user_id, amount, details):
+    with closing(connect()) as con:
+        row = con.execute("SELECT balance FROM users WHERE user_id=?", (user_id,)).fetchone()
+        if not row or float(row["balance"]) < float(amount):
+            return None
+        con.execute(
+            "UPDATE users SET balance=balance-?, updated_at=CURRENT_TIMESTAMP WHERE user_id=?",
+            (amount, user_id)
+        )
+        cur = con.execute(
+            "INSERT INTO withdrawals(user_id,amount,details) VALUES(?,?,?)",
+            (user_id, amount, details)
+        )
+        con.commit()
+        return cur.lastrowid
+
+
+def pending_withdrawals():
+    with closing(connect()) as con:
+        return con.execute("SELECT * FROM withdrawals WHERE status='pending' ORDER BY id DESC").fetchall()
+
+
+def review_withdrawal(wid, approve):
+    with closing(connect()) as con:
+        row = con.execute("SELECT * FROM withdrawals WHERE id=?", (wid,)).fetchone()
+        if not row or row["status"] != "pending":
+            return False
+        status = "approved" if approve else "rejected"
+        con.execute("UPDATE withdrawals SET status=?, reviewed_at=CURRENT_TIMESTAMP WHERE id=?", (status, wid))
+        if not approve:
+            con.execute(
+                "UPDATE users SET balance=balance+?, updated_at=CURRENT_TIMESTAMP WHERE user_id=?",
+                (row["amount"], row["user_id"])
+            )
+        con.commit()
+        return True
 
 
 def stats():
-    with conn() as c:
-        users = c.execute("SELECT COUNT(*) n FROM users").fetchone()["n"]
-        orders = c.execute("SELECT COUNT(*) n FROM orders").fetchone()["n"]
-        sells = c.execute("SELECT COUNT(*) n FROM sell_requests").fetchone()["n"]
-        deposits = c.execute("SELECT COUNT(*) n FROM deposits WHERE status='Pending'").fetchone()["n"]
-        withdrawals = c.execute("SELECT COUNT(*) n FROM withdrawals WHERE status='Pending'").fetchone()["n"]
-    return (f"📊 Stats\n\nUsers: {users}\nOrders: {orders}\nSell Requests: {sells}\n"
-            f"Pending Deposits: {deposits}\nPending Withdrawals: {withdrawals}\nTest Stock: {stock_count()}")
-
-
-def pending_list(table, limit=20):
-    allowed = {"deposits", "withdrawals", "sell_requests", "orders"}
-    if table not in allowed:
-        raise ValueError("Invalid table")
-    with conn() as c:
-        rows = c.execute(f"SELECT * FROM {table} WHERE status='Pending' ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
-    return rows
-
-
-def recent_orders(limit=20):
-    with conn() as c:
-        return c.execute(
-            "SELECT id,user_id,qty,total,status,created_at FROM orders ORDER BY id DESC LIMIT ?",
-            (limit,),
-        ).fetchall()
+    with closing(connect()) as con:
+        users = con.execute("SELECT COUNT(*) c FROM users").fetchone()["c"]
+        balance = con.execute("SELECT COALESCE(SUM(balance),0) s FROM users").fetchone()["s"]
+        pending_sells = con.execute("SELECT COUNT(*) c FROM sell_submissions WHERE status='pending'").fetchone()["c"]
+        pending_orders = con.execute("SELECT COUNT(*) c FROM orders WHERE status='pending'").fetchone()["c"]
+        pending_deposits = con.execute("SELECT COUNT(*) c FROM deposits WHERE status='pending'").fetchone()["c"]
+        pending_withdrawals = con.execute("SELECT COUNT(*) c FROM withdrawals WHERE status='pending'").fetchone()["c"]
+        return {
+            "users": users,
+            "balance": float(balance),
+            "pending_sells": pending_sells,
+            "pending_orders": pending_orders,
+            "pending_deposits": pending_deposits,
+            "pending_withdrawals": pending_withdrawals,
+        }
