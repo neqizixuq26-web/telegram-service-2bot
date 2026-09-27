@@ -34,7 +34,7 @@ SELL_TASK, SELL_EMAIL = range(2)
 BUY_SERVICE, BUY_CONFIRM = range(2, 4)
 DEPOSIT_AMOUNT, DEPOSIT_DETAILS = range(4, 6)
 WITHDRAW_AMOUNT, WITHDRAW_DETAILS = range(6, 8)
-ADMIN_PRICE, ADMIN_BKASH, ADMIN_NAGAD = range(8, 11)
+ADMIN_PRICE, ADMIN_BKASH = range(8, 10)
 ADMIN_ADD_SELL_TITLE, ADMIN_ADD_SELL_PRICE, ADMIN_ADD_SELL_DESC = range(11, 14)
 ADMIN_ADD_BUY_TITLE, ADMIN_ADD_BUY_PRICE, ADMIN_ADD_BUY_DESC = range(14, 17)
 ADMIN_BROADCAST = 17
@@ -48,20 +48,62 @@ def money(v) -> str:
     return f"{float(v):.2f}".rstrip("0").rstrip(".")
 
 
+# ---------- Persistent Reply Keyboard (main menu) ----------
+
+BTN_SELL = "📧 Gmail Sell"
+BTN_BUY = "🛒 Gmail Buy "
+BTN_DEPOSIT = "💰 Deposit"
+BTN_WITHDRAW = "💸 Withdraw"
+BTN_BALANCE = "💳 Balance"
+BTN_ORDERS = "📦 My Orders"
+BTN_HELP = "ℹ️ Help"
+BTN_SUPPORT = "🎧 Support"
+BTN_ADMIN = "⚙️ Admin Panel"
+BTN_HOME = "🏠 Home"
+
+
 def main_menu(user_id: int):
+    """Persistent bottom keyboard shown after /start, 'Home', and 'Back'."""
     rows = [
-        [InlineKeyboardButton("📧 Gmail Sell", callback_data="sell_menu"),
-         InlineKeyboardButton("🛒 Gmail Buy ", callback_data="buy_menu")],
-        [InlineKeyboardButton("💰 Deposit", callback_data="deposit"),
-         InlineKeyboardButton("💸 Withdraw", callback_data="withdraw")],
-        [InlineKeyboardButton("💳 Balance", callback_data="balance"),
-         InlineKeyboardButton("📦 My Orders", callback_data="my_orders")],
-        [InlineKeyboardButton("ℹ️ Help", callback_data="help"),
-         InlineKeyboardButton("🎧 Support", callback_data="support")],
+        [BTN_SELL, BTN_BUY],
+        [BTN_DEPOSIT, BTN_WITHDRAW],
+        [BTN_BALANCE, BTN_ORDERS],
+        [BTN_HELP, BTN_SUPPORT],
     ]
     if is_admin(user_id):
-        rows.append([InlineKeyboardButton("⚙️ Admin Panel", callback_data="admin")])
-    return InlineKeyboardMarkup(rows)
+        rows.append([BTN_ADMIN])
+    rows.append([BTN_HOME])
+    return ReplyKeyboardMarkup(rows, resize_keyboard=True)
+
+
+def get_uid(update: Update) -> int:
+    """User id whether the update came from a button tap or a typed message."""
+    q = update.callback_query
+    return q.from_user.id if q else update.effective_user.id
+
+
+async def ack(update: Update):
+    """Answer the callback query if this update came from an inline button tap."""
+    if update.callback_query:
+        await update.callback_query.answer()
+
+
+async def send_screen(update: Update, text: str, reply_markup=None, parse_mode=None):
+    """Show a screen (with an INLINE keyboard, if any) whether triggered by an
+    inline button tap or by a persistent reply-keyboard text message.
+    Never pass a ReplyKeyboardMarkup here — edit_message_text can't carry one."""
+    q = update.callback_query
+    if q:
+        await q.edit_message_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
+    else:
+        await update.message.reply_text(text, reply_markup=reply_markup, parse_mode=parse_mode)
+
+
+async def show_main_menu(update: Update, context: ContextTypes.DEFAULT_TYPE, text: str = "🏠 মূল মেনু"):
+    """Send the persistent main-menu keyboard as a fresh message. Used after an
+    edit_message_text screen, since a ReplyKeyboardMarkup can't attach to an edit."""
+    uid = get_uid(update)
+    await context.bot.send_message(uid, text, reply_markup=main_menu(uid))
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -108,11 +150,10 @@ async def verify_join(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ---------- User: Gmail/address task ----------
 
 async def sell_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
+    await ack(update)
     tasks = db.list_sell_tasks(active_only=True)
     if not tasks:
-        await q.edit_message_text("📧 বর্তমানে কোনো Gmail Task চালু নেই।")
+        await send_screen(update, "📧 বর্তমানে কোনো Gmail Task চালু নেই।")
         return ConversationHandler.END
     buttons = []
     for t in tasks:
@@ -121,9 +162,10 @@ async def sell_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             callback_data=f"sell_task:{t['id']}"
         )])
     buttons.append([InlineKeyboardButton("⬅️ Back", callback_data="back")])
-    await q.edit_message_text(
+    await send_screen(
+        update,
         "📧 Gmail Task\n\nএকটি Task নির্বাচন করুন:",
-        reply_markup=InlineKeyboardMarkup(buttons),
+        InlineKeyboardMarkup(buttons),
     )
     return SELL_TASK
 
@@ -142,7 +184,7 @@ async def sell_task_selected(update: Update, context: ContextTypes.DEFAULT_TYPE)
         f"💵 Reward: ৳{money(task['price'])}\n"
         f"📝 {task['description'] or 'কোনো অতিরিক্ত নির্দেশনা নেই।'}\n\n"
         "শুধু আপনার Gmail address পাঠান।\n"
-        "⚠️ Password,  botpass123@4 এটা সেট করবেন, আপনার ডিভাইস থেকে লগআউট দিয়ে রাখবেন ।\n\n"
+        "⚠️ Password, এটা  botpass123@4 সেট করুন ।\n\n"
         "উদাহরণ: example@gmail.com"
     )
     return SELL_EMAIL
@@ -189,11 +231,10 @@ async def sell_email_received(update: Update, context: ContextTypes.DEFAULT_TYPE
 # ---------- User: Buy services (no credential exchange) ----------
 
 async def buy_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
+    await ack(update)
     services = db.list_buy_services(active_only=True)
     if not services:
-        await q.edit_message_text("🛒 বর্তমানে কোনো Buy Service চালু নেই।")
+        await send_screen(update, "🛒 বর্তমানে কোনো Buy Service চালু নেই।")
         return ConversationHandler.END
     buttons = []
     for s in services:
@@ -202,11 +243,8 @@ async def buy_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             callback_data=f"buy_service:{s['id']}"
         )])
     buttons.append([InlineKeyboardButton("⬅️ Back", callback_data="back")])
-    await q.edit_message_text("🛒 Buy Service নির্বাচন করুন:", reply_markup=InlineKeyboardMarkup(buttons))
-    return BUY_SERVICE
-
-
-async def buy_service_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await send_screen(update, "🛒 Gmail Buy নির্বাচন করুন:", InlineKeyboardMarkup(buttons))
+    return BUY_SERSERVICEasync def buy_service_selselecteddate: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     service_id = int(q.data.split(":")[1])
@@ -247,9 +285,9 @@ async def buy_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     order_id = result
     await q.edit_message_text(
         f"✅ Order #{order_id} তৈরি হয়েছে।\n"
-        "Admin আপনার order process করবে।",
-        reply_markup=main_menu(update.effective_user.id),
+        "Admin আপনার order process করবে।"
     )
+    await show_main_menu(update, context)
     await notify_admin(
         context,
         f"🛒 নতুন Buy Order #{order_id}\n\n"
@@ -270,20 +308,20 @@ async def buy_cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     context.user_data.pop("buy_service_id", None)
-    await q.edit_message_text("❌ Order বাতিল করা হয়েছে।", reply_markup=main_menu(q.from_user.id))
+    await q.edit_message_text("❌ Order বাতিল করা হয়েছে।")
+    await show_main_menu(update, context)
     return ConversationHandler.END
 
 
 # ---------- Deposit / Withdraw ----------
 
 async def deposit_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
+    await ack(update)
     pay = db.get_payment_info()
-    await q.edit_message_text(
+    await send_screen(
+        update,
         "💰 Deposit\n\n"
-        f"bKash: {pay['bkash'] or 'Not set'}\n"
-        f"Nagad: {pay['nagad'] or 'Not set'}\n\n"
+        f"bKash: {pay['bkash'] or 'Not set'}\n\n"
         "প্রথমে কত টাকা Deposit করবেন লিখুন:"
     )
     return DEPOSIT_AMOUNT
@@ -326,10 +364,9 @@ async def deposit_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def withdraw_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    bal = db.get_balance(q.from_user.id)
-    await q.edit_message_text(f"💸 Withdraw\n\nCurrent balance: ৳{money(bal)}\n\nAmount লিখুন:")
+    await ack(update)
+    bal = db.get_balance(get_uid(update))
+    await send_screen(update, f"💸 Withdraw\n\nCurrent balance: ৳{money(bal)}\n\nAmount লিখুন:")
     return WITHDRAW_AMOUNT
 
 
@@ -346,7 +383,7 @@ async def withdraw_amount(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ পর্যাপ্ত balance নেই।")
         return WITHDRAW_AMOUNT
     context.user_data["withdraw_amount"] = float(amount)
-    await update.message.reply_text("bKash/Nagad number লিখুন:")
+    await update.message.reply_text("📱 বিকাশ নম্বর লিখুন:")
     return WITHDRAW_DETAILS
 
 
@@ -380,9 +417,14 @@ async def withdraw_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
-    await q.answer()
-    if not is_admin(q.from_user.id):
-        await q.answer("Admin only.", show_alert=True)
+    if q:
+        await q.answer()
+    uid = get_uid(update)
+    if not is_admin(uid):
+        if q:
+            await q.answer("Admin only.", show_alert=True)
+        else:
+            await update.message.reply_text("Admin only.")
         return
     stats = db.stats()
     kb = InlineKeyboardMarkup([
@@ -397,13 +439,14 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
          InlineKeyboardButton("📦 Orders", callback_data="admin_orders")],
         [InlineKeyboardButton("📢 Broadcast", callback_data="admin_broadcast")],
     ])
-    await q.edit_message_text(
+    await send_screen(
+        update,
         f"⚙️ Admin Panel\n\n"
         f"👥 Users: {stats['users']}\n"
         f"💰 Total balance: ৳{money(stats['balance'])}\n"
         f"📧 Pending submissions: {stats['pending_sells']}\n"
         f"📦 Pending orders: {stats['pending_orders']}",
-        reply_markup=kb,
+        kb,
     )
 
 
@@ -487,14 +530,12 @@ async def admin_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
     p = db.get_payment_info()
     kb = InlineKeyboardMarkup([
         [InlineKeyboardButton("✏️ Set bKash", callback_data="set_bkash")],
-        [InlineKeyboardButton("✏️ Set Nagad", callback_data="set_nagad")],
         [InlineKeyboardButton("💵 Set Gmail Task Default Price", callback_data="set_price")],
         [InlineKeyboardButton("⬅️ Admin Panel", callback_data="admin")],
     ])
     await q.edit_message_text(
         f"💳 Payment / Price Settings\n\n"
         f"bKash: {p['bkash'] or 'Not set'}\n"
-        f"Nagad: {p['nagad'] or 'Not set'}\n"
         f"Default task price: ৳{money(p['gmail_price'])}",
         reply_markup=kb,
     )
@@ -724,21 +765,6 @@ async def set_bkash_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 
-async def set_nagad_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    if not is_admin(q.from_user.id):
-        return ConversationHandler.END
-    await q.edit_message_text("📱 নতুন Nagad number লিখুন:")
-    return ADMIN_NAGAD
-
-
-async def set_nagad_value(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    db.set_setting("nagad_number", update.message.text.strip())
-    await update.message.reply_text("✅ Nagad updated.")
-    return ConversationHandler.END
-
-
 async def broadcast_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
@@ -766,18 +792,19 @@ async def broadcast_send(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ---------- Informational ----------
 
 async def balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    await q.edit_message_text(
-        f"💳 Your Balance: ৳{money(db.get_balance(q.from_user.id))}",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="back")]])
+    await ack(update)
+    uid = get_uid(update)
+    await send_screen(
+        update,
+        f"💳 Your Balance: ৳{money(db.get_balance(uid))}",
+        InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="back")]])
     )
 
 
 async def my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
-    rows = db.user_orders(q.from_user.id)
+    await ack(update)
+    uid = get_uid(update)
+    rows = db.user_orders(uid)
     if not rows:
         text = "📦 আপনার কোনো order নেই।"
     else:
@@ -785,7 +812,7 @@ async def my_orders(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"#{r['id']} — {r['title']} — ৳{money(r['price'])} — {r['status']}"
             for r in rows[:20]
         )
-    await q.edit_message_text(text, reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="back")]]))
+    await send_screen(update, text, InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="back")]]))
 
 
 async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -810,25 +837,34 @@ async def simple_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def support(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    q = update.callback_query
-    await q.answer()
+    await ack(update)
     username = SUPPORT_USERNAME.lstrip("@")
-    await q.edit_message_text(
+    await send_screen(
+        update,
         f"🎧 Support: @{username}",
-        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("💬 Contact Support", url=f"https://t.me/{username}")]])
+        InlineKeyboardMarkup([[InlineKeyboardButton("💬 Contact Support", url=f"https://t.me/{username}")]])
     )
 
 
 async def back(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
-    await q.edit_message_text("মূল মেনু:", reply_markup=main_menu(q.from_user.id))
+    await q.edit_message_text("🏠 মূল মেনু")
+    await show_main_menu(update, context, "নিচের মেনু থেকে অপশন বেছে নিন:")
     return ConversationHandler.END
 
 
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data.clear()
     await update.message.reply_text("❌ Cancelled.", reply_markup=main_menu(update.effective_user.id))
+    return ConversationHandler.END
+
+
+async def go_home(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles the persistent '🏠 Home' reply-keyboard button — works even
+    mid-conversation, cancelling whatever step the user was on."""
+    context.user_data.clear()
+    await update.message.reply_text("🏠 মূল মেনু", reply_markup=main_menu(update.effective_user.id))
     return ConversationHandler.END
 
 
@@ -848,34 +884,42 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
 def build_application():
     app = Application.builder().token(BOT_TOKEN).concurrent_updates(False).build()
 
+    def btn(label: str):
+        """Exact-match filter for a persistent reply-keyboard button label."""
+        return filters.Regex(f"^{re.escape(label)}$")
+
+    home_guard = MessageHandler(btn(BTN_HOME), go_home)
+
     conv = ConversationHandler(
         entry_points=[
             CallbackQueryHandler(sell_menu, "^sell_menu$"),
+            MessageHandler(btn(BTN_SELL), sell_menu),
             CallbackQueryHandler(buy_menu, "^buy_menu$"),
+            MessageHandler(btn(BTN_BUY), buy_menu),
             CallbackQueryHandler(deposit_start, "^deposit$"),
+            MessageHandler(btn(BTN_DEPOSIT), deposit_start),
             CallbackQueryHandler(withdraw_start, "^withdraw$"),
+            MessageHandler(btn(BTN_WITHDRAW), withdraw_start),
             CallbackQueryHandler(add_sell_task_start, "^add_sell_task$"),
             CallbackQueryHandler(add_buy_start, "^add_buy_service$"),
             CallbackQueryHandler(set_price_start, "^set_price$"),
             CallbackQueryHandler(set_bkash_start, "^set_bkash$"),
-            CallbackQueryHandler(set_nagad_start, "^set_nagad$"),
             CallbackQueryHandler(broadcast_start, "^admin_broadcast$"),
         ],
         states={
             SELL_TASK: [CallbackQueryHandler(sell_task_selected, r"^sell_task:\d+$")],
-            SELL_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, sell_email_received)],
+            SELL_EMAIL: [home_guard, MessageHandler(filters.TEXT & ~filters.COMMAND, sell_email_received)],
             BUY_SERVICE: [CallbackQueryHandler(buy_service_selected, r"^buy_service:\d+$")],
             BUY_CONFIRM: [
                 CallbackQueryHandler(buy_confirm, "^buy_confirm$"),
                 CallbackQueryHandler(buy_cancel, "^buy_cancel$"),
             ],
-            DEPOSIT_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, deposit_amount)],
-            DEPOSIT_DETAILS: [MessageHandler(filters.TEXT & ~filters.COMMAND, deposit_details)],
-            WITHDRAW_AMOUNT: [MessageHandler(filters.TEXT & ~filters.COMMAND, withdraw_amount)],
-            WITHDRAW_DETAILS: [MessageHandler(filters.TEXT & ~filters.COMMAND, withdraw_details)],
+            DEPOSIT_AMOUNT: [home_guard, MessageHandler(filters.TEXT & ~filters.COMMAND, deposit_amount)],
+            DEPOSIT_DETAILS: [home_guard, MessageHandler(filters.TEXT & ~filters.COMMAND, deposit_details)],
+            WITHDRAW_AMOUNT: [home_guard, MessageHandler(filters.TEXT & ~filters.COMMAND, withdraw_amount)],
+            WITHDRAW_DETAILS: [home_guard, MessageHandler(filters.TEXT & ~filters.COMMAND, withdraw_details)],
             ADMIN_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_price_value)],
             ADMIN_BKASH: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_bkash_value)],
-            ADMIN_NAGAD: [MessageHandler(filters.TEXT & ~filters.COMMAND, set_nagad_value)],
             ADMIN_ADD_SELL_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_sell_title)],
             ADMIN_ADD_SELL_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_sell_price)],
             ADMIN_ADD_SELL_DESC: [MessageHandler(filters.TEXT & ~filters.COMMAND, add_sell_desc)],
@@ -887,6 +931,7 @@ def build_application():
         fallbacks=[
             CommandHandler("cancel", cancel),
             CallbackQueryHandler(back, "^back$"),
+            home_guard,
         ],
         allow_reentry=True,
     )
@@ -894,6 +939,14 @@ def build_application():
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("help", help_cmd))
     app.add_handler(conv)
+
+    # Persistent reply-keyboard buttons that don't start a multi-step flow
+    app.add_handler(MessageHandler(btn(BTN_HOME), go_home))
+    app.add_handler(MessageHandler(btn(BTN_BALANCE), balance))
+    app.add_handler(MessageHandler(btn(BTN_ORDERS), my_orders))
+    app.add_handler(MessageHandler(btn(BTN_HELP), help_cmd))
+    app.add_handler(MessageHandler(btn(BTN_SUPPORT), support))
+    app.add_handler(MessageHandler(btn(BTN_ADMIN), admin_panel))
 
     app.add_handler(CallbackQueryHandler(verify_join, "^verify_join$"))
     app.add_handler(CallbackQueryHandler(admin_panel, "^admin$"))
