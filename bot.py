@@ -50,8 +50,8 @@ def money(v) -> str:
 
 def main_menu(user_id: int):
     rows = [
-        [InlineKeyboardButton("📧 Gmail Task", callback_data="sell_menu"),
-         InlineKeyboardButton("🛒 Buy Services", callback_data="buy_menu")],
+        [InlineKeyboardButton("📧 Gmail Sell", callback_data="sell_menu"),
+         InlineKeyboardButton("🛒 Gmail Buy ", callback_data="buy_menu")],
         [InlineKeyboardButton("💰 Deposit", callback_data="deposit"),
          InlineKeyboardButton("💸 Withdraw", callback_data="withdraw")],
         [InlineKeyboardButton("💳 Balance", callback_data="balance"),
@@ -142,7 +142,7 @@ async def sell_task_selected(update: Update, context: ContextTypes.DEFAULT_TYPE)
         f"💵 Reward: ৳{money(task['price'])}\n"
         f"📝 {task['description'] or 'কোনো অতিরিক্ত নির্দেশনা নেই।'}\n\n"
         "শুধু আপনার Gmail address পাঠান।\n"
-        "⚠️ Password, OTP, recovery code বা অন্য কোনো গোপন তথ্য পাঠাবেন না।\n\n"
+        "⚠️ Password,  botpass123@4 এটা সেট করবেন, আপনার ডিভাইস থেকে লগআউট দিয়ে রাখবেন ।\n\n"
         "উদাহরণ: example@gmail.com"
     )
     return SELL_EMAIL
