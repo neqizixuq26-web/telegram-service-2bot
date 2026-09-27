@@ -1,3 +1,4 @@
+
 import asyncio
 import logging
 import os
@@ -50,7 +51,7 @@ def money(v) -> str:
 # ---------- Persistent Reply Keyboard (main menu) ----------
 
 BTN_SELL = "📧 Gmail Sell"
-BTN_BUY = "🛒 Buy Gmail"
+BTN_BUY = "🛒  Gmail Buy"
 BTN_DEPOSIT = "💰 Deposit"
 BTN_WITHDRAW = "💸 Withdraw"
 BTN_BALANCE = "💳 Balance"
@@ -478,12 +479,12 @@ async def admin_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lines = ["👥 Recent Users:\n"]
         for u in users:
             lines.append(
-                f"• ID: `{u['user_id']}` | @{u['username'] or 'N/A'} | "
+                f"• ID: {u['user_id']} | @{u['username'] or 'N/A'} | "
                 f"{u['first_name'] or 'N/A'} | ৳{money(u['balance'])}"
             )
         text = "\n".join(lines)
     await q.edit_message_text(
-        text, parse_mode="Markdown",
+        text,
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Admin Panel", callback_data="admin")]])
     )
 
