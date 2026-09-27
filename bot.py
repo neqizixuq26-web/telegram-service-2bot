@@ -1,4 +1,3 @@
-
 import asyncio
 import logging
 import os
@@ -50,8 +49,8 @@ def money(v) -> str:
 
 # ---------- Persistent Reply Keyboard (main menu) ----------
 
-BTN_SELL = "📧 Gmail Sell"
-BTN_BUY = "🛒 Gmail Buy "
+BTN_SELL = "📧 Gmail Task"
+BTN_BUY = "🛒 Buy Services"
 BTN_DEPOSIT = "💰 Deposit"
 BTN_WITHDRAW = "💸 Withdraw"
 BTN_BALANCE = "💳 Balance"
@@ -184,7 +183,7 @@ async def sell_task_selected(update: Update, context: ContextTypes.DEFAULT_TYPE)
         f"💵 Reward: ৳{money(task['price'])}\n"
         f"📝 {task['description'] or 'কোনো অতিরিক্ত নির্দেশনা নেই।'}\n\n"
         "শুধু আপনার Gmail address পাঠান।\n"
-        "⚠️ Password, এটা  botpass123@4 সেট করুন ।\n\n"
+        "⚠️ Password, OTP, recovery code বা অন্য কোনো গোপন তথ্য পাঠাবেন না।\n\n"
         "উদাহরণ: example@gmail.com"
     )
     return SELL_EMAIL
@@ -243,8 +242,11 @@ async def buy_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
             callback_data=f"buy_service:{s['id']}"
         )])
     buttons.append([InlineKeyboardButton("⬅️ Back", callback_data="back")])
-    await send_screen(update, "🛒 Gmail Buy নির্বাচন করুন:", InlineKeyboardMarkup(buttons))
-    return BUY_SERSERVICEasync def buy_service_selselecteddate: Update, context: ContextTypes.DEFAULT_TYPE):
+    await send_screen(update, "🛒 Buy Service নির্বাচন করুন:", InlineKeyboardMarkup(buttons))
+    return BUY_SERVICE
+
+
+async def buy_service_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     service_id = int(q.data.split(":")[1])
