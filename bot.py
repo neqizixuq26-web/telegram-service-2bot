@@ -1,4 +1,3 @@
-
 import asyncio
 import logging
 import os
@@ -184,7 +183,7 @@ async def sell_task_selected(update: Update, context: ContextTypes.DEFAULT_TYPE)
         f"💵 Reward: ৳{money(task['price'])}\n"
         f"📝 {task['description'] or 'কোনো অতিরিক্ত নির্দেশনা নেই।'}\n\n"
         "শুধু আপনার Gmail address পাঠান।\n"
-        "⚠️ Password, যেটা দিয়েছি সেটা সেট করুন, recovery নাম্বার বা gmail এড থাকলে জিমিল বাতিল করা দেওয়া  হবে।\n\n"
+        "⚠️ Password, যেটা দিয়েছি সেটা সেট করুন, recovery নাম্বার বা gmail এড থাকলে জিমিল বাতিল করা দেওয়া  হবে।\n\n"
         "উদাহরণ: example@gmail.com"
     )
     return SELL_EMAIL
@@ -202,12 +201,12 @@ async def sell_email_received(update: Update, context: ContextTypes.DEFAULT_TYPE
     task_id = context.user_data.get("sell_task_id")
     task = db.get_sell_task(task_id) if task_id else None
     if not task:
-        await update.message.reply_text("❌ Task পাওয়া যায়নি। আবার চেষ্টা করুন।")
+        await update.message.reply_text("❌ Task পাওয়া যায়নি। আবার চেষ্টা করুন।")
         return ConversationHandler.END
 
     sub_id = db.create_sell_submission(update.effective_user.id, task_id, email)
     await update.message.reply_text(
-        f"✅ Submission #{sub_id} নেওয়া হয়েছে।\n"
+        f"✅ Submission #{sub_id} নেওয়া হয়েছে।\n"
         "Admin review করার পর Task reward আপনার balance-এ যোগ হবে।",
         reply_markup=main_menu(update.effective_user.id),
     )
@@ -277,7 +276,7 @@ async def buy_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     service_id = context.user_data.get("buy_service_id")
     service = db.get_buy_service(service_id) if service_id else None
     if not service:
-        await q.edit_message_text("❌ Service পাওয়া যায়নি।")
+        await q.edit_message_text("❌ Service পাওয়া যায়নি।")
         return ConversationHandler.END
 
     ok, result = db.create_buy_order(update.effective_user.id, service_id)
@@ -287,7 +286,7 @@ async def buy_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     order_id = result
     await q.edit_message_text(
-        f"✅ Order #{order_id} তৈরি হয়েছে।\n"
+        f"✅ Order #{order_id} তৈরি হয়েছে।\n"
         "Admin আপনার order process করবে।"
     )
     await show_main_menu(update, context)
@@ -348,7 +347,7 @@ async def deposit_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
     details = update.message.text.strip()
     dep_id = db.create_deposit(update.effective_user.id, amount, details)
     await update.message.reply_text(
-        f"✅ Deposit request #{dep_id} পাঠানো হয়েছে। Admin approve করলে balance যোগ হবে।",
+        f"✅ Deposit request #{dep_id} পাঠানো হয়েছে। Admin approve করলে balance যোগ হবে।",
         reply_markup=main_menu(update.effective_user.id),
     )
     await notify_admin(
@@ -395,10 +394,10 @@ async def withdraw_details(update: Update, context: ContextTypes.DEFAULT_TYPE):
     details = update.message.text.strip()
     wid = db.create_withdrawal(update.effective_user.id, amount, details)
     if not wid:
-        await update.message.reply_text("❌ Balance পরিবর্তন করা যায়নি। আবার চেষ্টা করুন।")
+        await update.message.reply_text("❌ Balance পরিবর্তন করা যায়নি। আবার চেষ্টা করুন।")
         return ConversationHandler.END
     await update.message.reply_text(
-        f"✅ Withdraw request #{wid} পাঠানো হয়েছে। Admin review করবে।",
+        f"✅ Withdraw request #{wid} পাঠানো হয়েছে। Admin review করবে।",
         reply_markup=main_menu(update.effective_user.id),
     )
     await notify_admin(
@@ -608,32 +607,47 @@ async def admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     action, raw_id = q.data.split(":")
     item_id = int(raw_id)
 
-    if action == "approve_sell":
-        result = db.review_sell(item_id, True)
-        msg = "Submission approved." if result else "Submission already processed/not found."
-    elif action == "reject_sell":
-        result = db.review_sell(item_id, False)
-        msg = "Submission rejected." if result else "Submission already processed/not found."
-    elif action == "approve_dep":
-        result = db.review_deposit(item_id, True)
-        msg = "Deposit approved." if result else "Deposit already processed/not found."
-    elif action == "reject_dep":
-        result = db.review_deposit(item_id, False)
-        msg = "Deposit rejected." if result else "Deposit already processed/not found."
-    elif action == "approve_wd":
-        result = db.review_withdrawal(item_id, True)
-        msg = "Withdrawal approved." if result else "Withdrawal already processed/not found."
-    elif action == "reject_wd":
-        result = db.review_withdrawal(item_id, False)
-        msg = "Withdrawal rejected/refunded." if result else "Withdrawal already processed/not found."
-    elif action == "complete_order":
-        result = db.review_order(item_id, True)
-        msg = "Order completed." if result else "Order already processed/not found."
-    elif action == "reject_order":
-        result = db.review_order(item_id, False)
-        msg = "Order rejected/refunded." if result else "Order already processed/not found."
-    else:
+    # Admin-এর মেসেজ থেকে user id বের করা
+    m = re.search(r"User ID:\s*(\d+)", q.message.text or "")
+    target_uid = int(m.group(1)) if m else None
+
+    # action -> (db function, approve?, admin msg, user msg)
+    actions = {
+        "approve_sell": (db.review_sell, True, "Submission approved.",
+                         f"✅ আপনার Gmail Submission #{item_id} Approve করা হয়েছে। Reward আপনার balance-এ যোগ হয়েছে।"),
+        "reject_sell": (db.review_sell, False, "Submission rejected.",
+                        f"❌ আপনার Gmail Submission #{item_id} Reject করা হয়েছে।"),
+        "approve_dep": (db.review_deposit, True, "Deposit approved.",
+                        f"✅ আপনার Deposit Request #{item_id} Approve করা হয়েছে। Balance-এ টাকা যোগ হয়েছে।"),
+        "reject_dep": (db.review_deposit, False, "Deposit rejected.",
+                       f"❌ আপনার Deposit Request #{item_id} Reject করা হয়েছে।"),
+        "approve_wd": (db.review_withdrawal, True, "Withdrawal approved.",
+                       f"✅ আপনার Withdraw Request #{item_id} Approve করা হয়েছে। শীঘ্রই পেমেন্ট পাবেন।"),
+        "reject_wd": (db.review_withdrawal, False, "Withdrawal rejected/refunded.",
+                      f"❌ আপনার Withdraw Request #{item_id} Reject করা হয়েছে। টাকা balance-এ ফেরত দেওয়া হয়েছে।"),
+        "complete_order": (db.review_order, True, "Order completed.",
+                           f"✅ আপনার Order #{item_id} সম্পন্ন (Complete) হয়েছে।"),
+        "reject_order": (db.review_order, False, "Order rejected/refunded.",
+                         f"❌ আপনার Order #{item_id} Reject করা হয়েছে। টাকা balance-এ ফেরত দেওয়া হয়েছে।"),
+    }
+
+    if action not in actions:
         msg = "Unknown action."
+    else:
+        func, approve, ok_msg, user_msg = actions[action]
+        result = func(item_id, approve)
+        if result:
+            msg = ok_msg
+            if target_uid:
+                try:
+                    await context.bot.send_message(target_uid, user_msg)
+                except Exception as e:
+                    log.error("User notification failed (%s): %s", target_uid, e)
+                    msg += " (⚠️ User-কে মেসেজ পাঠানো যায়নি)"
+            else:
+                msg += " (⚠️ User ID পাওয়া যায়নি)"
+        else:
+            msg = "Already processed/not found."
 
     await q.edit_message_text(f"✅ {msg}", reply_markup=InlineKeyboardMarkup([
         [InlineKeyboardButton("⬅️ Admin Panel", callback_data="admin")]
@@ -822,7 +836,7 @@ async def help_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "ℹ️ Help\n\n"
         "📧 Gmail Task: শুধু Gmail address জমা দিন।\n"
-        "🛒 Buy Services: balance দিয়ে service order করুন।\n"
+        "🛒 Buy Services: balance দিয়ে service order করুন।\n"
         "💰 Deposit: Admin approval-এর মাধ্যমে balance যোগ হবে।\n"
         "💸 Withdraw: balance থেকে withdrawal request দিন।\n\n"
         "⚠️ Password, OTP, recovery code বা অন্য কোনো secret তথ্য কখনো পাঠাবেন না।",
@@ -834,7 +848,7 @@ async def simple_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
     await q.edit_message_text(
-        "ℹ️ Help\n\nশুধু Gmail address submit করুন। Password/OTP/recovery code নেওয়া হয় না।",
+        "ℹ️ Help\n\nশুধু Gmail address submit করুন। Password/OTP/recovery code নেওয়া হয় না।",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅️ Back", callback_data="back")]])
     )
 
